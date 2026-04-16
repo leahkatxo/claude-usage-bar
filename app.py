@@ -98,3 +98,76 @@ def render(usage: dict, now=None) -> dict:
     max_pct = max(percents) if percents else 0
     title = f"{_dot(max_pct)} {int(round(max_pct))}%"
     return {"title": title, "items": items}
+
+
+def run_once() -> None:
+    try:
+        usage = fetch_usage(read_token())
+    except subprocess.CalledProcessError:
+        print("⚠  Could not read token from keychain. Sign in to Claude Code first.")
+        return
+    except requests.RequestException as e:
+        print(f"⚠  API error: {e}")
+        return
+
+    view = render(usage)
+    print(view["title"])
+    for item in view["items"]:
+        print("  " + item["text"])
+
+
+import rumps
+
+REFRESH_SECONDS = 5 * 60
+
+
+class UsageBarApp(rumps.App):
+    def __init__(self):
+        super().__init__("⋯", quit_button=None)
+        self.last_good_title = "⋯"
+        self.timer = rumps.Timer(self.tick, REFRESH_SECONDS)
+        self.timer.start()
+        self.tick(None)
+
+    def tick(self, _sender):
+        try:
+            usage = fetch_usage(read_token())
+        except subprocess.CalledProcessError:
+            self._show_error("Sign in to Claude Code first.")
+            return
+        except (requests.RequestException, ValueError) as e:
+            self._show_error(f"API error: {e}")
+            return
+
+        view = render(usage)
+        self.title = view["title"]
+        self.last_good_title = view["title"]
+
+        menu_items = [rumps.MenuItem(item["text"]) for item in view["items"]]
+        menu_items.append(rumps.separator)
+        menu_items.append(rumps.MenuItem(f"Last updated: {datetime.now().strftime('%H:%M')}"))
+        menu_items.append(rumps.MenuItem("Refresh now", callback=self.manual_refresh))
+        menu_items.append(rumps.MenuItem("Quit", callback=rumps.quit_application))
+        self.menu.clear()
+        self.menu = menu_items
+
+    def _show_error(self, msg: str):
+        self.title = "⚠ " + self.last_good_title.lstrip("🟢🟠🔴⚠ ").strip()
+        self.menu.clear()
+        self.menu = [
+            rumps.MenuItem(msg),
+            rumps.separator,
+            rumps.MenuItem("Refresh now", callback=self.manual_refresh),
+            rumps.MenuItem("Quit", callback=rumps.quit_application),
+        ]
+
+    def manual_refresh(self, _sender):
+        self.tick(None)
+
+
+if __name__ == "__main__":
+    import sys
+    if "--once" in sys.argv:
+        run_once()
+        sys.exit(0)
+    UsageBarApp().run()
