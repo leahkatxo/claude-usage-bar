@@ -1,5 +1,7 @@
 """Claude Usage Bar — menu bar app showing Claude Code quota usage."""
 
+from datetime import datetime, timezone
+
 BAR_WIDTH = 10
 
 
@@ -20,5 +22,49 @@ def humanize_duration(seconds: float) -> str:
     return f"{s // 86400}d"
 
 
-def render(usage: dict, now=None):
-    raise NotImplementedError
+ROWS = [
+    ("5-hour", "five_hour"),
+    ("Week", "seven_day"),
+    ("Sonnet", "seven_day_sonnet"),
+    ("Opus", "seven_day_opus"),
+]
+
+
+def _dot(max_pct: float) -> str:
+    if max_pct >= 85:
+        return "🔴"
+    if max_pct >= 60:
+        return "🟠"
+    return "🟢"
+
+
+def _format_row(label: str, block: dict, now: datetime) -> dict:
+    pct = block["utilization"]
+    pct_int = int(round(pct))
+    resets_at = block.get("resets_at")
+    if resets_at:
+        reset_dt = datetime.fromisoformat(resets_at)
+        delta_s = (reset_dt - now).total_seconds()
+        reset_str = f"resets in {humanize_duration(delta_s)}"
+    else:
+        reset_str = ""
+    text = f"{label:<8}{bar(pct)} {pct_int:>3}%   {reset_str}".rstrip()
+    return {"label": label, "text": text}
+
+
+def render(usage: dict, now=None) -> dict:
+    if now is None:
+        now = datetime.now(timezone.utc)
+
+    items = []
+    percents = []
+    for label, key in ROWS:
+        block = usage.get(key)
+        if not block:
+            continue
+        items.append(_format_row(label, block, now))
+        percents.append(block["utilization"])
+
+    max_pct = max(percents) if percents else 0
+    title = f"{_dot(max_pct)} {int(round(max_pct))}%"
+    return {"title": title, "items": items}
