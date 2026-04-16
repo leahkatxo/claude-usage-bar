@@ -123,7 +123,7 @@ def _format_row(label: str, block: dict, now: datetime) -> dict:
     else:
         reset_str = ""
     text = f"{label:<8}{bar(pct)} {pct_int:>3}%   {reset_str}".rstrip()
-    return {"label": label, "text": text}
+    return {"label": label, "text": text, "pct": pct, "reset_str": reset_str}
 
 
 def render(usage: dict, now=None) -> dict:
@@ -161,8 +161,67 @@ def run_once() -> None:
 
 
 import rumps
+try:
+    import AppKit
+    HAS_APPKIT = True
+except ImportError:
+    HAS_APPKIT = False
 
 REFRESH_SECONDS = 5 * 60
+
+# Font for dropdown items — monospace so bars align
+MENU_FONT = AppKit.NSFont.monospacedSystemFontOfSize_weight_(13, AppKit.NSFontWeightMedium) if HAS_APPKIT else None
+
+# Attributed-string colors (NSColor) for dropdown
+AS_COLORS = {}
+if HAS_APPKIT:
+    AS_COLORS = {
+        "label": AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.85, 0.85, 0.88, 1.0),
+        "pct":   AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.95, 0.95, 0.97, 1.0),
+        "empty": AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.35, 0.35, 0.38, 1.0),
+        "teal":  AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.49, 0.84, 0.77, 1.0),
+        "peach": AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(1.00, 0.73, 0.59, 1.0),
+        "rose":  AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(1.00, 0.56, 0.67, 1.0),
+        "meta":  AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(0.55, 0.55, 0.58, 1.0),
+    }
+
+
+def _bar_color_for_pct(pct: float):
+    if pct >= 85:
+        return AS_COLORS["rose"]
+    if pct >= 60:
+        return AS_COLORS["peach"]
+    return AS_COLORS["teal"]
+
+
+def _styled_menu_item(item: dict) -> rumps.MenuItem:
+    """Build an NSMenuItem with colored attributed title."""
+    mi = rumps.MenuItem(item["text"])  # plain fallback
+    if not HAS_APPKIT:
+        return mi
+
+    label = item["label"]
+    pct = item["pct"]
+    filled = int(max(0.0, min(100.0, float(pct))) / 100 * BAR_WIDTH)
+    empty = BAR_WIDTH - filled
+    reset_str = item.get("reset_str", "")
+
+    attrs_label = {AppKit.NSFontAttributeName: MENU_FONT, AppKit.NSForegroundColorAttributeName: AS_COLORS["label"]}
+    attrs_filled = {AppKit.NSFontAttributeName: MENU_FONT, AppKit.NSForegroundColorAttributeName: _bar_color_for_pct(pct)}
+    attrs_empty = {AppKit.NSFontAttributeName: MENU_FONT, AppKit.NSForegroundColorAttributeName: AS_COLORS["empty"]}
+    attrs_pct = {AppKit.NSFontAttributeName: MENU_FONT, AppKit.NSForegroundColorAttributeName: AS_COLORS["pct"]}
+    attrs_meta = {AppKit.NSFontAttributeName: MENU_FONT, AppKit.NSForegroundColorAttributeName: AS_COLORS["meta"]}
+
+    s = AppKit.NSMutableAttributedString.alloc().init()
+    s.appendAttributedString_(AppKit.NSAttributedString.alloc().initWithString_attributes_(f"{label:<8}", attrs_label))
+    s.appendAttributedString_(AppKit.NSAttributedString.alloc().initWithString_attributes_("█" * filled, attrs_filled))
+    s.appendAttributedString_(AppKit.NSAttributedString.alloc().initWithString_attributes_("░" * empty, attrs_empty))
+    s.appendAttributedString_(AppKit.NSAttributedString.alloc().initWithString_attributes_(f" {int(round(pct)):>3}%", attrs_pct))
+    if reset_str:
+        s.appendAttributedString_(AppKit.NSAttributedString.alloc().initWithString_attributes_(f"   {reset_str}", attrs_meta))
+
+    mi._menuitem.setAttributedTitle_(s)
+    return mi
 
 
 class UsageBarApp(rumps.App):
@@ -194,9 +253,15 @@ class UsageBarApp(rumps.App):
         else:
             self.title = view["title"]  # emoji fallback
 
-        menu_items = [rumps.MenuItem(item["text"]) for item in view["items"]]
+        menu_items = [_styled_menu_item(item) for item in view["items"]]
         menu_items.append(rumps.separator)
-        menu_items.append(rumps.MenuItem(f"Last updated: {datetime.now().strftime('%H:%M')}"))
+        updated = rumps.MenuItem(f"Last updated: {datetime.now().strftime('%H:%M')}")
+        if HAS_APPKIT:
+            attrs_meta = {AppKit.NSFontAttributeName: MENU_FONT, AppKit.NSForegroundColorAttributeName: AS_COLORS["meta"]}
+            updated._menuitem.setAttributedTitle_(
+                AppKit.NSAttributedString.alloc().initWithString_attributes_(
+                    f"Last updated: {datetime.now().strftime('%H:%M')}", attrs_meta))
+        menu_items.append(updated)
         menu_items.append(rumps.MenuItem("Refresh now", callback=self.manual_refresh))
         menu_items.append(rumps.MenuItem("Quit", callback=rumps.quit_application))
         self.menu.clear()
