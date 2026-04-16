@@ -2,10 +2,13 @@
 
 import json
 import subprocess
+import requests
 from datetime import datetime, timezone
 
 BAR_WIDTH = 10
 KEYCHAIN_SERVICE = "Claude Code-credentials"
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+HTTP_TIMEOUT = 10
 
 
 def read_token() -> str:
@@ -17,6 +20,19 @@ def read_token() -> str:
     )
     payload = json.loads(result.stdout.strip())
     return payload["claudeAiOauth"]["accessToken"]
+
+
+def fetch_usage(token: str) -> dict:
+    resp = requests.get(
+        USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "anthropic-beta": "oauth-2025-04-20",
+        },
+        timeout=HTTP_TIMEOUT,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
 def bar(pct: float) -> str:
