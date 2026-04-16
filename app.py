@@ -1,12 +1,56 @@
 """Claude Usage Bar — menu bar app showing Claude Code quota usage."""
 
 import json
+import os
 import subprocess
 import requests
 from datetime import datetime, timezone
 
 BAR_WIDTH = 10
 KEYCHAIN_SERVICE = "Claude Code-credentials"
+ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+
+# Pastel palette
+COLORS = {
+    "teal":  (0.49, 0.84, 0.77),   # #7CD5C4 — low usage
+    "peach": (1.00, 0.73, 0.59),    # #FFBA97 — medium usage
+    "rose":  (1.00, 0.56, 0.67),    # #FF8FAB — high usage
+    "lilac": (0.77, 0.72, 0.92),    # #C4B7EA — warning/error
+}
+
+
+def _generate_icons():
+    """Create tiny colored-circle PNGs for the menu bar using AppKit."""
+    os.makedirs(ICON_DIR, exist_ok=True)
+    try:
+        import AppKit
+    except ImportError:
+        return  # PyObjC not available; emoji fallback
+    size = 32
+    for name, (r, g, b) in COLORS.items():
+        path = os.path.join(ICON_DIR, f"{name}.png")
+        if os.path.exists(path):
+            continue
+        img = AppKit.NSImage.alloc().initWithSize_((size, size))
+        img.lockFocus()
+        color = AppKit.NSColor.colorWithCalibratedRed_green_blue_alpha_(r, g, b, 1.0)
+        color.setFill()
+        AppKit.NSBezierPath.bezierPathWithOvalInRect_(((4, 4), (size - 8, size - 8))).fill()
+        img.unlockFocus()
+        tiff = img.TIFFRepresentation()
+        bitmap = AppKit.NSBitmapImageRep.alloc().initWithData_(tiff)
+        png_data = bitmap.representationUsingType_properties_(AppKit.NSBitmapImageFileTypePNG, {})
+        png_data.writeToFile_atomically_(path, True)
+
+
+def _icon_path(max_pct: float) -> str:
+    if max_pct >= 85:
+        name = "rose"
+    elif max_pct >= 60:
+        name = "peach"
+    else:
+        name = "teal"
+    return os.path.join(ICON_DIR, f"{name}.png")
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 HTTP_TIMEOUT = 10
 
@@ -97,7 +141,7 @@ def render(usage: dict, now=None) -> dict:
 
     max_pct = max(percents) if percents else 0
     title = f"{_dot(max_pct)} {int(round(max_pct))}%"
-    return {"title": title, "items": items}
+    return {"title": title, "title_text": f" {int(round(max_pct))}%", "icon": _icon_path(max_pct), "items": items}
 
 
 def run_once() -> None:
@@ -124,7 +168,9 @@ REFRESH_SECONDS = 5 * 60
 class UsageBarApp(rumps.App):
     def __init__(self):
         super().__init__("⋯", quit_button=None)
+        self._template = False  # keep icon colors, don't template
         self.last_good_title = "⋯"
+        _generate_icons()
         self.timer = rumps.Timer(self.tick, REFRESH_SECONDS)
         self.timer.start()
         self.tick(None)
@@ -140,8 +186,13 @@ class UsageBarApp(rumps.App):
             return
 
         view = render(usage)
-        self.title = view["title"]
-        self.last_good_title = view["title"]
+        self.title = view["title_text"]
+        self.last_good_title = view["title_text"]
+        icon_file = view["icon"]
+        if os.path.exists(icon_file):
+            self.icon = icon_file
+        else:
+            self.title = view["title"]  # emoji fallback
 
         menu_items = [rumps.MenuItem(item["text"]) for item in view["items"]]
         menu_items.append(rumps.separator)
@@ -152,7 +203,10 @@ class UsageBarApp(rumps.App):
         self.menu = menu_items
 
     def _show_error(self, msg: str):
-        self.title = "⚠ " + self.last_good_title.lstrip("🟢🟠🔴⚠ ").strip()
+        lilac = os.path.join(ICON_DIR, "lilac.png")
+        if os.path.exists(lilac):
+            self.icon = lilac
+        self.title = self.last_good_title
         self.menu.clear()
         self.menu = [
             rumps.MenuItem(msg),

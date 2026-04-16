@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 .DS_Store
 com.leah.claude-usage-bar.plist
+icons/
+launchd.out.log
+launchd.err.log
