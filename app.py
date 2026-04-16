@@ -1,8 +1,22 @@
 """Claude Usage Bar — menu bar app showing Claude Code quota usage."""
 
+import json
+import subprocess
 from datetime import datetime, timezone
 
 BAR_WIDTH = 10
+KEYCHAIN_SERVICE = "Claude Code-credentials"
+
+
+def read_token() -> str:
+    result = subprocess.run(
+        ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout.strip())
+    return payload["claudeAiOauth"]["accessToken"]
 
 
 def bar(pct: float) -> str:
